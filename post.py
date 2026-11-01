@@ -11,7 +11,8 @@ CF_ID = os.environ["CF_ACCOUNT_ID"]
 CF_TOKEN = os.environ["CF_API_TOKEN"]
 FB_ID = os.environ["FB_PAGE_ID"]
 FB_TOKEN = os.environ["FB_PAGE_TOKEN"]
-GEMINI_MODEL = "gemini-flash-latest"
+# ૧. મોડેલનું નામ વધુ સ્ટેબલ રાખો:
+GEMINI_MODEL = "gemini-2.5-flash"  # અથવા "gemini-1.5-flash"
 
 
 def generate_visual_prompt():
@@ -89,13 +90,26 @@ def make_caption(img):
     return "Trending US News Update\n\n#news #breaking #usa #daily #updates"
 
 
+
+
+
+# ૨. post_fb ફંક્શનમાં એરર પ્રિન્ટ ઉમેરો:
 def post_fb(img, caption):
-    r = requests.post(
-        f"https://graph.facebook.com/v21.0/{FB_ID}/photos",
-        data={"message": caption, "access_token": FB_TOKEN},
-        files={"source": ("post.jpg", img, "image/jpeg")},
-        timeout=120,
-    )
+    url = f"https://graph.facebook.com/v21.0/{FB_ID}/photos"
+    data = {
+        "caption": caption,          # Graph API photos એન્ડપોઈન્ટ માટે 'caption' અથવા 'message' ચાલે છે
+        "access_token": FB_TOKEN
+    }
+    files = {
+        "source": ("post.jpg", img, "image/jpeg")
+    }
+    
+    r = requests.post(url, data=data, files=files, timeout=120)
+    
+    # ફેસબુક તરફથી ચોક્કસ શું એરર આવી તે પ્રિન્ટ થશે:
+    if r.status_code != 200:
+        print("Facebook Error Details:", r.text)
+        
     r.raise_for_status()
     print("Posted successfully:", r.json())
 
