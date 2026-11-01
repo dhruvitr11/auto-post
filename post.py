@@ -16,23 +16,23 @@ GEMINI_MODEL = "gemini-flash-latest"
 
 def generate_visual_prompt():
     """
-    સ્ટેપ ૧: Gemini તમારા લાંબા પ્રોમ્પ્ટ અને નિયમો વાંચશે
-    અને Flux માટે ફક્ત ૨-૩ લાઈનનો શોર્ટ વિઝ્યુઅલ પ્રોમ્પ્ટ બનાવશે.
+    સ્ટેપ ૧: Gemini તમારા લાંબા પ્રોમ્પ્ટ પરથી ટૂંકો વિઝ્યુઅલ પ્રોમ્પ્ટ બનાવશે.
     """
     try:
         client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+        prompt_instruction = (
+            f"You are an expert news visual director. Read these guidelines:\n"
+            f"{INSTRUCTIONS_PROMPT}\n\n"
+            f"TASK: Select ONE trending US news topic. Write a concise, photorealistic, "
+            f"descriptive image prompt (max 40-50 words) suitable for Flux-1-schnell. "
+            f"Focus only on visual elements: people, setting, lighting, cinematic style, "
+            f"and editorial atmosphere. Output ONLY the raw prompt text, no intro, no quotes."
+        )
+
+        # સીધો સ્ટ્રિંગ પાસ કરો:
         res = client.models.generate_content(
             model=GEMINI_MODEL,
-            contents=[
-                types.Part.from_text(
-                    f"You are an expert news visual director. Read these guidelines:\n"
-                    f"{INSTRUCTIONS_PROMPT}\n\n"
-                    f"TASK: Select ONE trending US news topic. Write a concise, photorealistic, "
-                    f"descriptive image prompt (max 40-50 words) suitable for Flux-1-schnell. "
-                    f"Focus only on visual elements: people, setting, lighting, cinematic style, "
-                    f"and editorial atmosphere. Output ONLY the raw prompt text, no intro, no quotes."
-                )
-            ],
+            contents=prompt_instruction,
         )
         visual_prompt = (res.text or "").strip().replace("\n", " ")
         if visual_prompt:
@@ -41,20 +41,25 @@ def generate_visual_prompt():
     except Exception as e:
         print("Gemini prompt generation error:", e)
 
-    # જો કોઈ કારણસર Gemini ફેલ થાય તો ફોલબેક પ્રોમ્પ્ટ
     return "Cinematic photorealistic news photography, US Capitol and White House background, dramatic lighting, professional editorial shot, 8k"
 
 
 def make_image():
     """
-    સ્ટેપ ૨: Gemini પાસેથી શોર્ટ પ્રોમ્પ્ટ લઈને Cloudflare Flux ને આપશે.
+    સ્ટેપ ૨: Cloudflare Flux ઈમેજ જનરેટ કરશે ('seed' પેરામીટર વગર).
     """
     short_prompt = generate_visual_prompt()
+
+    # અહીથી 'seed' હટાવી લીધું છે જેથી 400 એરર નહીં આવે
+    payload = {
+        "prompt": short_prompt,
+        "steps": 4
+    }
 
     r = requests.post(
         f"https://api.cloudflare.com/client/v4/accounts/{CF_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell",
         headers={"Authorization": f"Bearer {CF_TOKEN}"},
-        json={"prompt": short_prompt, "steps": 4, "seed": random.randint(1, 10**9)},
+        json=payload,
         timeout=120,
     )
     if r.status_code != 200:
