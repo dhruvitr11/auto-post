@@ -10,7 +10,7 @@ CF_ID = os.environ["CF_ACCOUNT_ID"]
 CF_TOKEN = os.environ["CF_API_TOKEN"]
 FB_ID = os.environ["FB_PAGE_ID"]
 FB_TOKEN = os.environ["FB_PAGE_TOKEN"]
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.8-flash"
 
 
 def generate_visual_prompt():
