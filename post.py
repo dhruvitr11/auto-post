@@ -11,15 +11,35 @@ CF_TOKEN = os.environ["CF_API_TOKEN"]
 FB_ID = os.environ["FB_PAGE_ID"]
 FB_TOKEN = os.environ["FB_PAGE_TOKEN"]
 
-# જો પહેલું મોડેલ વ્યસ્ત (503) હોય તો આપમેળે બીજા મોડેલનો ઉપયોગ કરશે
 GEMINI_MODELS = [
     "gemini-3.8-flash",
-    "gemini-3.8-flash-lite",
     "gemini-flash-latest",
+    "gemini-flash-lite-latest",
 ]
 
 
-def call_gemini(parts):
+def call_cloudflare_text(prompt_text):
+    print("Gemini busy (503) -> Switching to Cloudflare Llama AI...", flush=True)
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ID}/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+    payload = {
+        "messages": [
+            {"role": "system", "content": "You are a helpful assistant. Follow instructions strictly and output only the requested text."},
+            {"role": "user", "content": prompt_text}
+        ]
+    }
+    res = requests.post(
+        url,
+        headers={"Authorization": f"Bearer {CF_TOKEN}"},
+        json=payload,
+        timeout=60
+    )
+    if res.status_code != 200:
+        print("Cloudflare Text Error:", res.status_code, res.text, flush=True)
+    res.raise_for_status()
+    return res.json()["result"]["response"].strip()
+
+
+def call_gemini(parts, fallback_text_prompt=None):
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
@@ -33,25 +53,28 @@ def call_gemini(parts):
         for attempt in range(1, 3):
             try:
                 print(f"Trying {model} (attempt {attempt})...", flush=True)
-                res = requests.post(url, json=payload, timeout=45)
+                res = requests.post(url, json=payload, timeout=35)
                 if res.status_code == 200:
                     data = res.json()
                     text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
                     if text:
                         return text
                 else:
-                    print(f"{model} error {res.status_code}: {res.text}", flush=True)
+                    print(f"{model} error {res.status_code}", flush=True)
                     last_error = f"{res.status_code}: {res.text}"
             except Exception as e:
                 print(f"{model} timeout/exception: {e}", flush=True)
                 last_error = str(e)
-            time.sleep(3)
+            time.sleep(2)
 
-    raise RuntimeError(f"All Gemini models busy/failed. Last error: {last_error}")
+    if fallback_text_prompt:
+        return call_cloudflare_text(fallback_text_prompt)
+
+    raise RuntimeError(f"All AI models failed. Last error: {last_error}")
 
 
 def generate_visual_prompt():
-    print("Step 1: Generating visual prompt with Gemini...", flush=True)
+    print("Step 1: Generating visual prompt...", flush=True)
     prompt_instruction = (
         f"You are an expert news visual director. Read these guidelines:\n"
         f"{INSTRUCTIONS_PROMPT}\n\n"
@@ -61,7 +84,11 @@ def generate_visual_prompt():
         f"and editorial atmosphere. Output ONLY the raw prompt text, no intro, no quotes."
     )
 
-    visual_prompt = call_gemini([{"text": prompt_instruction}]).replace("\n", " ")
+    visual_prompt = call_gemini(
+        [{"text": prompt_instruction}],
+        fallback_text_prompt=prompt_instruction
+    ).replace("\n", " ")
+
     print("Visual Prompt Ready:", visual_prompt, flush=True)
     return visual_prompt
 
@@ -86,22 +113,29 @@ def make_image():
     r.raise_for_status()
 
     print("Image Ready!", flush=True)
-    return base64.b64decode(r.json()["result"]["image"])
+    return base64.b64decode(r.json()["result"]["image"]), short_prompt
 
 
-def make_caption(img):
-    print("Step 3: Generating caption with Gemini...", flush=True)
+def make_caption(img, visual_prompt):
+    print("Step 3: Generating caption...", flush=True)
     b64_img = base64.b64encode(img).decode("utf-8")
+    caption_instruction = (
+        "Look at this image and write a Facebook post for it: "
+        "a catchy title on the first line, then a short engaging "
+        "description (2-3 sentences), then 8 relevant hashtags on "
+        "the last line. Plain text only, no markdown, no asterisks."
+    )
     parts = [
         {"inline_data": {"mime_type": "image/jpeg", "data": b64_img}},
-        {"text": (
-            "Look at this image and write a Facebook post for it: "
-            "a catchy title on the first line, then a short engaging "
-            "description (2-3 sentences), then 8 relevant hashtags on "
-            "the last line. Plain text only, no markdown, no asterisks."
-        )}
+        {"text": caption_instruction}
     ]
-    text = call_gemini(parts)
+    cf_fallback_prompt = (
+        f"Write a Facebook post based on this news image description: '{visual_prompt}'. "
+        f"Put a catchy title on the first line, then a short engaging description (2-3 sentences), "
+        f"then 8 relevant hashtags on the last line. Plain text only, no markdown, no asterisks."
+    )
+
+    text = call_gemini(parts, fallback_text_prompt=cf_fallback_prompt)
     print("Caption Ready!", flush=True)
     return text
 
@@ -147,8 +181,8 @@ def main():
 
     if os.environ.get("FORCE") == "yes":
         print("FORCE run triggered: bypassing schedule...", flush=True)
-        img = make_image()
-        caption = make_caption(img)
+        img, visual_prompt = make_image()
+        caption = make_caption(img, visual_prompt)
         post_fb(img, caption)
         return
 
@@ -170,8 +204,8 @@ def main():
 
     for i, t in enumerate(state["times"]):
         if i not in state["done"] and dt.datetime.fromisoformat(t) <= now:
-            img = make_image()
-            caption = make_caption(img)
+            img, visual_prompt = make_image()
+            caption = make_caption(img, visual_prompt)
             post_fb(img, caption)
             state["done"].append(i)
             break
