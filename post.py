@@ -25,9 +25,14 @@ def generate_visual_prompt():
     )
 
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    payload = {"contents": [{"parts": [{"text": prompt_instruction}]}]}
-    
-    res = requests.post(url, json=payload, timeout=90)
+    payload = {
+        "contents": [{"parts": [{"text": prompt_instruction}]}],
+        "generationConfig": {
+            "thinkingConfig": {"thinkingBudget": 0}
+        }
+    }
+
+    res = requests.post(url, json=payload, timeout=60)
     if res.status_code != 200:
         print("Gemini Prompt Error:", res.status_code, res.text, flush=True)
     res.raise_for_status()
@@ -54,7 +59,7 @@ def make_image():
         f"https://api.cloudflare.com/client/v4/accounts/{CF_ID}/ai/run/@cf/black-forest-labs/flux-1-schnell",
         headers={"Authorization": f"Bearer {CF_TOKEN}"},
         json=payload,
-        timeout=1200,
+        timeout=120,
     )
     if r.status_code != 200:
         print("Cloudflare Error Details:", r.text, flush=True)
@@ -79,9 +84,12 @@ def make_caption(img):
                     "the last line. Plain text only, no markdown, no asterisks."
                 )}
             ]
-        }]
+        }],
+        "generationConfig": {
+            "thinkingConfig": {"thinkingBudget": 0}
+        }
     }
-    res = requests.post(url, json=payload, timeout=90)
+    res = requests.post(url, json=payload, timeout=60)
     if res.status_code != 200:
         print("Gemini Caption Error:", res.status_code, res.text, flush=True)
     res.raise_for_status()
