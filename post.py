@@ -1,4 +1,4 @@
-import os, io, json, random, base64, time, textwrap, datetime as dt
+import os, io, json, random, base64, time, textwrap, xml.etree.ElementTree as ET, datetime as dt
 from zoneinfo import ZoneInfo
 import requests
 from PIL import Image, ImageDraw, ImageFont
@@ -18,12 +18,35 @@ GEMINI_MODELS = [
 ]
 
 
+def fetch_latest_us_news(used_titles=None):
+    print("Fetching real-time US news headlines...", flush=True)
+    used_titles = set(used_titles or [])
+    rss_url = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
+    try:
+        res = requests.get(rss_url, timeout=20)
+        res.raise_for_status()
+        root = ET.fromstring(res.content)
+        headlines = []
+        for item in root.findall(".//item/title")[:25]:
+            if item.text:
+                clean_title = item.text.rsplit(" - ", 1)[0].strip()
+                if clean_title and clean_title not in used_titles:
+                    headlines.append(clean_title)
+        if headlines:
+            chosen = random.choice(headlines[:12])
+            print("Selected Live Topic:", chosen, flush=True)
+            return chosen
+    except Exception as e:
+        print("RSS fetch warning:", e, flush=True)
+    return None
+
+
 def call_cloudflare_text(prompt_text):
     print("Gemini busy -> Switching to Cloudflare Llama AI...", flush=True)
     url = f"https://api.cloudflare.com/client/v4/accounts/{CF_ID}/ai/run/@cf/meta/llama-3.3-70b-instruct-fp8-fast"
     payload = {
         "messages": [
-            {"role": "system", "content": "You are a helpful assistant. Output ONLY valid JSON, no markdown, no extra text."},
+            {"role": "system", "content": "You are an original news editor. Rewrite facts into completely fresh, original wording. Output ONLY valid JSON when requested."},
             {"role": "user", "content": prompt_text}
         ]
     }
@@ -72,15 +95,23 @@ def call_gemini(parts, fallback_text_prompt=None):
     raise RuntimeError(f"All AI models failed: {last_error}")
 
 
-def generate_news_package():
-    print("Step 1: Generating news topic, visual prompt, and banner text...", flush=True)
+def generate_news_package(used_titles=None):
+    print("Step 1: Generating original news visual prompt and banner text...", flush=True)
+    live_topic = fetch_latest_us_news(used_titles)
+    topic_clause = (
+        f"BASE YOUR POST ON THIS REAL CURRENT US NEWS EVENT (rewrite completely in your own original words, never copy verbatim): '{live_topic}'\n"
+        if live_topic else
+        "Select ONE current trending US news topic.\n"
+    )
+
     prompt_instruction = (
         f"You are an expert news visual director. Read these guidelines:\n"
         f"{INSTRUCTIONS_PROMPT}\n\n"
-        f"TASK: Select ONE fresh trending US news topic and return ONLY a valid JSON object with these 3 exact keys:\n"
+        f"{topic_clause}"
+        f"TASK: Return ONLY a valid JSON object with these 3 exact keys:\n"
         f'1. "visual_prompt": A concise photorealistic image prompt (40-50 words) for Flux-1-schnell focusing ONLY on people, setting, and action. CRITICAL: Do NOT include any text, banners, signs, or words inside the image prompt.\n'
-        f'2. "headline": A short punchy uppercase news headline (5 to 7 words max, e.g., "US GAS PRICES SURGE TO RECORD HIGHS").\n'
-        f'3. "subtitle": A crisp uppercase sub-headline (8 to 12 words max summarizing the key fact).\n'
+        f'2. "headline": A short punchy 100% original uppercase news headline (5 to 7 words max).\n'
+        f'3. "subtitle": A crisp 100% original uppercase sub-headline (8 to 12 words max summarizing the key update).\n'
         f"Output ONLY raw JSON, no markdown code blocks."
     )
 
@@ -91,7 +122,7 @@ def generate_news_package():
     print("Visual Prompt:", data["visual_prompt"], flush=True)
     print("Headline:", data["headline"], flush=True)
     print("Subtitle:", data["subtitle"], flush=True)
-    return data["visual_prompt"], data["headline"].upper(), data["subtitle"].upper()
+    return data["visual_prompt"], data["headline"].upper(), data["subtitle"].upper(), live_topic
 
 
 def add_news_banner(img_bytes, headline, subtitle):
@@ -100,12 +131,11 @@ def add_news_banner(img_bytes, headline, subtitle):
     w, h = img.size
 
     banner_h = int(h * 0.22)
-    new_img = Image.new("RGB", (w, h + banner_h), (195, 22, 28))  # Deep Breaking News Red
+    new_img = Image.new("RGB", (w, h + banner_h), (195, 22, 28))
     new_img.paste(img, (0, 0))
 
     draw = ImageDraw.Draw(new_img)
 
-    # Ubuntu / Linux પર ઉપલબ્ધ બોલ્ડ ફોન્ટ લોડ કરો
     font_paths = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
@@ -118,13 +148,11 @@ def add_news_banner(img_bytes, headline, subtitle):
     head_font = ImageFont.truetype(font_path, head_size) if font_path else ImageFont.load_default()
     sub_font = ImageFont.truetype(font_path, sub_size) if font_path else ImageFont.load_default()
 
-    # Headline ને 2 લાઈનમાં સેટ કરો
     wrapped_head = textwrap.fill(headline, width=26)
     head_bbox = draw.multiline_textbbox((0, 0), wrapped_head, font=head_font, align="center")
     head_w = head_bbox[2] - head_bbox[0]
     head_h = head_bbox[3] - head_bbox[1]
 
-    # Subtitle ને 1-2 લાઈનમાં સેટ કરો
     wrapped_sub = textwrap.fill(subtitle, width=56)
     sub_bbox = draw.multiline_textbbox((0, 0), wrapped_sub, font=sub_font, align="center")
     sub_w = sub_bbox[2] - sub_bbox[0]
@@ -153,8 +181,8 @@ def add_news_banner(img_bytes, headline, subtitle):
     return out.getvalue()
 
 
-def make_image():
-    short_prompt, headline, subtitle = generate_news_package()
+def make_image(used_titles=None):
+    short_prompt, headline, subtitle, live_topic = generate_news_package(used_titles)
     print("Step 2: Generating clean photo with Cloudflare Flux...", flush=True)
 
     payload = {
@@ -175,14 +203,14 @@ def make_image():
     raw_img = base64.b64decode(r.json()["result"]["image"])
     final_img = add_news_banner(raw_img, headline, subtitle)
     print("Final News Graphic Ready!", flush=True)
-    return final_img, f"{headline} - {subtitle}"
+    return final_img, f"{headline} - {subtitle}", live_topic
 
 
 def make_caption(img, news_summary):
-    print("Step 3: Generating Facebook caption...", flush=True)
+    print("Step 3: Generating original Facebook caption...", flush=True)
     b64_img = base64.b64encode(img).decode("utf-8")
     caption_instruction = (
-        f"Look at this news image ({news_summary}) and write a Facebook post for it: "
+        f"Look at this news graphic ({news_summary}) and write a 100% original Facebook post for it: "
         "a catchy title on the first line, then a short engaging "
         "description (2-3 sentences), then 8 relevant hashtags on "
         "the last line. Plain text only, no markdown, no asterisks."
@@ -238,7 +266,7 @@ def main():
 
     if os.environ.get("FORCE") == "yes":
         print("FORCE run triggered: bypassing schedule...", flush=True)
-        img, news_summary = make_image()
+        img, news_summary, _ = make_image()
         caption = make_caption(img, news_summary)
         post_fb(img, caption)
         return
@@ -246,7 +274,7 @@ def main():
     try:
         state = json.load(open(STATE))
     except Exception:
-        state = {"date": "", "times": [], "done": []}
+        state = {"date": "", "times": [], "done": [], "used_topics": []}
 
     if state["date"] != str(now.date()):
         if now.hour < 6:
@@ -256,15 +284,21 @@ def main():
             "date": str(now.date()),
             "times": make_schedule(now.date(), now),
             "done": [],
+            "used_topics": [],
         }
         print("Aajna times:", state["times"], flush=True)
 
+    used_topics = state.get("used_topics", [])
+
     for i, t in enumerate(state["times"]):
         if i not in state["done"] and dt.datetime.fromisoformat(t) <= now:
-            img, news_summary = make_image()
+            img, news_summary, live_topic = make_image(used_topics)
             caption = make_caption(img, news_summary)
             post_fb(img, caption)
             state["done"].append(i)
+            if live_topic:
+                used_topics.append(live_topic)
+                state["used_topics"] = used_topics
             break
 
     json.dump(state, open(STATE, "w"), indent=2)
