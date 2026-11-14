@@ -1,4 +1,4 @@
-import os, json, random, base64, datetime as dt
+import os, json, random, base64, time, datetime as dt
 from zoneinfo import ZoneInfo
 import requests
 
@@ -10,7 +10,44 @@ CF_ID = os.environ["CF_ACCOUNT_ID"]
 CF_TOKEN = os.environ["CF_API_TOKEN"]
 FB_ID = os.environ["FB_PAGE_ID"]
 FB_TOKEN = os.environ["FB_PAGE_TOKEN"]
-GEMINI_MODEL = "gemini-3.8-flash"
+
+# જો પહેલું મોડેલ વ્યસ્ત (503) હોય તો આપમેળે બીજા મોડેલનો ઉપયોગ કરશે
+GEMINI_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.8-flash-lite",
+    "gemini-flash-latest",
+]
+
+
+def call_gemini(parts):
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "thinkingConfig": {"thinkingBudget": 0}
+        }
+    }
+
+    last_error = None
+    for model in GEMINI_MODELS:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        for attempt in range(1, 3):
+            try:
+                print(f"Trying {model} (attempt {attempt})...", flush=True)
+                res = requests.post(url, json=payload, timeout=45)
+                if res.status_code == 200:
+                    data = res.json()
+                    text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    if text:
+                        return text
+                else:
+                    print(f"{model} error {res.status_code}: {res.text}", flush=True)
+                    last_error = f"{res.status_code}: {res.text}"
+            except Exception as e:
+                print(f"{model} timeout/exception: {e}", flush=True)
+                last_error = str(e)
+            time.sleep(3)
+
+    raise RuntimeError(f"All Gemini models busy/failed. Last error: {last_error}")
 
 
 def generate_visual_prompt():
@@ -24,24 +61,7 @@ def generate_visual_prompt():
         f"and editorial atmosphere. Output ONLY the raw prompt text, no intro, no quotes."
     )
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    payload = {
-        "contents": [{"parts": [{"text": prompt_instruction}]}],
-        "generationConfig": {
-            "thinkingConfig": {"thinkingBudget": 0}
-        }
-    }
-
-    res = requests.post(url, json=payload, timeout=60)
-    if res.status_code != 200:
-        print("Gemini Prompt Error:", res.status_code, res.text, flush=True)
-    res.raise_for_status()
-
-    data = res.json()
-    visual_prompt = data["candidates"][0]["content"]["parts"][0]["text"].strip().replace("\n", " ")
-    if not visual_prompt:
-        raise ValueError("Gemini returned empty visual prompt")
-
+    visual_prompt = call_gemini([{"text": prompt_instruction}]).replace("\n", " ")
     print("Visual Prompt Ready:", visual_prompt, flush=True)
     return visual_prompt
 
@@ -72,33 +92,16 @@ def make_image():
 def make_caption(img):
     print("Step 3: Generating caption with Gemini...", flush=True)
     b64_img = base64.b64encode(img).decode("utf-8")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-    payload = {
-        "contents": [{
-            "parts": [
-                {"inline_data": {"mime_type": "image/jpeg", "data": b64_img}},
-                {"text": (
-                    "Look at this image and write a Facebook post for it: "
-                    "a catchy title on the first line, then a short engaging "
-                    "description (2-3 sentences), then 8 relevant hashtags on "
-                    "the last line. Plain text only, no markdown, no asterisks."
-                )}
-            ]
-        }],
-        "generationConfig": {
-            "thinkingConfig": {"thinkingBudget": 0}
-        }
-    }
-    res = requests.post(url, json=payload, timeout=60)
-    if res.status_code != 200:
-        print("Gemini Caption Error:", res.status_code, res.text, flush=True)
-    res.raise_for_status()
-
-    data = res.json()
-    text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-    if not text:
-        raise ValueError("Gemini returned empty caption")
-
+    parts = [
+        {"inline_data": {"mime_type": "image/jpeg", "data": b64_img}},
+        {"text": (
+            "Look at this image and write a Facebook post for it: "
+            "a catchy title on the first line, then a short engaging "
+            "description (2-3 sentences), then 8 relevant hashtags on "
+            "the last line. Plain text only, no markdown, no asterisks."
+        )}
+    ]
+    text = call_gemini(parts)
     print("Caption Ready!", flush=True)
     return text
 
