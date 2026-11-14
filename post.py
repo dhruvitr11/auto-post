@@ -79,9 +79,15 @@ def generate_visual_prompt():
         f"You are an expert news visual director. Read these guidelines:\n"
         f"{INSTRUCTIONS_PROMPT}\n\n"
         f"TASK: Select ONE trending US news topic. Write a concise, photorealistic, "
-        f"descriptive image prompt (max 40-50 words) suitable for Flux-1-schnell. "
-        f"Focus only on visual elements: people, setting, lighting, cinematic style, "
-        f"and editorial atmosphere. Output ONLY the raw prompt text, no intro, no quotes."
+        f"descriptive image prompt (max 50-60 words) suitable for Flux-1-schnell. "
+        f"Design the image as a BREAKING NEWS broadcast graphic. The bottom of the image "
+        f"MUST feature a thick, solid red banner with bold, stark white capitalized text "
+        f"serving as the headline (e.g., 'US GAS PRICES SURGE TO RECORD OCTOBER HIGHS'). "
+        f"Directly underneath the main headline, include a smaller subtitle in white "
+        f"capitalized text (e.g., 'NATIONWIDE AVERAGE HITS $4.27 AS ECONOMIC CONCERNS GROW'). "
+        f"Focus heavily on specific, natural human elements and active, authentic everyday environments "
+        f"connected to the news, avoiding empty or generic outdoor shots. "
+        f"Output ONLY the raw prompt text, no intro, no quotes."
     )
 
     visual_prompt = call_gemini(
