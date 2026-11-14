@@ -34,7 +34,10 @@ def call_cloudflare_text(prompt_text):
         timeout=60
     )
     res.raise_for_status()
-    return res.json()["result"]["response"].strip()
+    resp = res.json()["result"]["response"]
+    if isinstance(resp, dict):
+        return json.dumps(resp)
+    return str(resp).strip()
 
 
 def call_gemini(parts, fallback_text_prompt=None):
